@@ -38,14 +38,15 @@ jobs:
       
       - name: Run basic network tests
         run: |
-          # Example: Test network connectivity using the peer address
+          # Example: Test network connectivity and basic operations
           echo "Testing network with peer: $ANT_PEERS"
+          echo "SECRET_KEY available: ${SECRET_KEY:+YES}${SECRET_KEY:-NO}"
           
-          # Add your actual test commands here
-          # For example:
-          # - Upload/download files to the network
-          # - Test smart contract deployment if EVM is enabled
-          # - Verify network nodes are responding
+          # Test basic ant CLI operations
+          echo "Test file content" > test-file.txt
+          
+          # Upload file to network using --local flag
+          ant --local file upload test-file.txt --public
           
           echo "✅ Basic tests completed"
       

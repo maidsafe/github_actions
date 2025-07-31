@@ -14,6 +14,7 @@ Starts a local Autonomi testnet with optional EVM support. This action handles a
 - Configurable node count and network settings
 - Automatic peer discovery and network verification
 - Support for custom rewards addresses
+- Automatically extracts and sets SECRET_KEY for ant CLI operations
 
 **Usage:**
 ```yaml
@@ -105,8 +106,14 @@ jobs:
       
       - name: Run your tests
         run: |
-          # Your test commands here
-          # The network peer address is available as: ${{ steps.start-network.outputs.peer-address }}
+          # Your test commands here using ant CLI
+          # Use --local flag to connect to the local network automatically
+          
+          # Example: Upload a file
+          echo "Test data" > test.txt
+          ant --local file upload test.txt --public
+          
+          # The network peer address is also available as: ${{ steps.start-network.outputs.peer-address }}
           echo "Network is running, peer: ${{ steps.start-network.outputs.peer-address }}"
           
       - name: Cleanup Autonomi Network
@@ -122,8 +129,11 @@ jobs:
 The actions set up several environment variables that your tests can use:
 
 - `ANT_PEERS`: The peer address of the first node in the network
+- `SECRET_KEY`: The deployer secret key for ant CLI payment operations (when EVM is enabled)
 - `EVM_NETWORK`: Set to `local` when EVM is enabled
 - `ANT_LOG`: Set to `v` for verbose logging
+
+**Note:** When using the ant CLI with these actions, you can use the `--local` flag which automatically connects to the local network setup.
 
 ## Requirements
 

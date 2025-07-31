@@ -2,6 +2,10 @@ name: 'Spawn Autonomi Network'
 description: 'Starts a local Autonomi testnet with EVM support - self-contained with all prerequisites'
 author: 'MaidSafe'
 
+branding:
+  icon: 'play-circle'
+  color: 'blue'
+
 inputs:
   autonomi-version:
     description: 'Autonomi version to use (e.g., stable-2025.7.1.3)'
