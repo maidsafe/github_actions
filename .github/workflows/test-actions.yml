@@ -35,8 +35,7 @@ jobs:
           fi
           
           echo "✅ Network is running successfully"
-          echo "Using peer: $ANT_PEERS"
-      
+
       - name: Test ant CLI - File Upload and Download
         run: |
           echo "Testing ant CLI with network peer: $ANT_PEERS"
@@ -54,9 +53,9 @@ jobs:
 
           # Upload the test file with detailed logging
           echo "Uploading test file..."
-          echo "Command: ant --peer \"$ANT_PEERS\" file upload testfile.txt --public"
+          echo "Command: ant --local file upload testfile.txt --public"
           
-          if ! ant --peer "$ANT_PEERS" file upload testfile.txt --public > upload_output.txt 2>&1; then
+          if ! ant --local file upload testfile.txt --public > upload_output.txt 2>&1; then
             echo "❌ File upload failed"
             echo "Upload output:"
             cat upload_output.txt
@@ -87,7 +86,7 @@ jobs:
           
           # Download the file back
           echo "Downloading file from address: $FILE_ADDR"
-          if ! ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloadedfile.txt 2>&1; then
+          if ! ant --local file download "$FILE_ADDR" downloadedfile.txt 2>&1; then
             echo "❌ File download failed"
             exit 1
           fi
