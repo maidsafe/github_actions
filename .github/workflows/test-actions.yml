@@ -41,26 +41,22 @@ jobs:
         run: |
           echo "Testing ant CLI with network peer: $ANT_PEERS"
           echo "SECRET_KEY available: ${SECRET_KEY:+YES (${#SECRET_KEY} chars)}${SECRET_KEY:-NO}"
-          
+
           # Create a test file
-          echo "Hello Autonomi Network - $(date)" > test-file.txt
-          echo "This is a test file for CI validation" >> test-file.txt
-          echo "Generated at: $(date -u)" >> test-file.txt
-          echo "Test file created with $(wc -c < test-file.txt) bytes"
+          echo "Hello Autonomi Network - $(date)" > testfile.txt
+          echo "This is a test file for CI validation" >> testfile.txt
+          echo "Generated at: $(date -u)" >> testfile.txt
+          echo "Test file created with $(wc -c < testfile.txt) bytes"
 
           # Verify ant CLI is available
           echo "Checking ant CLI version..."
           ant --version
-          
-          # Create wallet if needed (fallback)
-          echo "Creating wallet as fallback..."
-          ant --peer "$ANT_PEERS" wallet create --no-password || echo "Wallet creation failed or not needed"
 
           # Upload the test file with detailed logging
           echo "Uploading test file..."
-          echo "Command: ant --peer \"$ANT_PEERS\" file upload test-file.txt --public"
+          echo "Command: ant --peer \"$ANT_PEERS\" file upload testfile.txt --public"
           
-          if ! ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt 2>&1; then
+          if ! ant --peer "$ANT_PEERS" file upload testfile.txt --public > upload_output.txt 2>&1; then
             echo "❌ File upload failed"
             echo "Upload output:"
             cat upload_output.txt
@@ -91,28 +87,28 @@ jobs:
           
           # Download the file back
           echo "Downloading file from address: $FILE_ADDR"
-          if ! ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloaded-file.txt 2>&1; then
+          if ! ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloadedfile.txt 2>&1; then
             echo "❌ File download failed"
             exit 1
           fi
           
           # Verify the downloaded file exists and matches the original
           echo "Verifying downloaded file..."
-          if [ ! -f "downloaded-file.txt" ]; then
+          if [ ! -f "downloadedfile.txt" ]; then
             echo "❌ Downloaded file does not exist"
             exit 1
           fi
           
-          echo "Downloaded file size: $(wc -c < downloaded-file.txt) bytes"
+          echo "Downloaded file size: $(wc -c < downloadedfile.txt) bytes"
           
-          if cmp -s test-file.txt downloaded-file.txt; then
+          if cmp -s testfile.txt downloadedfile.txt; then
             echo "✅ File download successful - content matches original"
           else
             echo "❌ Downloaded file does not match original"
             echo "Original file content:"
-            cat test-file.txt
+            cat testfile.txt
             echo "Downloaded file content:"
-            cat downloaded-file.txt
+            cat downloadedfile.txt
             exit 1
           fi
           
