@@ -1,0 +1,153 @@
+name: Advanced Autonomi Network Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      autonomi-version:
+        description: 'Autonomi version to test with'
+        required: false
+        default: 'stable-2025.7.1.3'
+      node-count:
+        description: 'Number of nodes to spawn'
+        required: false
+        default: '25'
+
+jobs:
+  # Job 1: Test with EVM enabled
+  test-with-evm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Start Autonomi Network with EVM
+        id: start-network
+        uses: maidsafe/autonomi-actions/spawn-autonomi-network@v1
+        with:
+          autonomi-version: ${{ github.event.inputs.autonomi-version || 'stable-2025.7.1.3' }}
+          node-count: ${{ github.event.inputs.node-count || '25' }}
+          enable-evm: 'true'
+          rewards-address: '0x03B770D9cD32077cC0bF330c13C114a87643B124'
+      
+      - name: Set up Node.js for EVM testing
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Test EVM functionality
+        run: |
+          echo "Testing EVM functionality..."
+          echo "Network peer: ${{ steps.start-network.outputs.peer-address }}"
+          echo "EVM Network: $EVM_NETWORK"
+          
+          # Example EVM tests:
+          # - Deploy smart contracts
+          # - Test RPC endpoints (usually on port 8545)
+          # - Verify EVM testnet is accessible
+          
+          # Check if EVM testnet is running on default port
+          timeout 10 bash -c 'until nc -z localhost 8545; do sleep 1; done' || {
+            echo "⚠️  EVM testnet might not be running on port 8545"
+          }
+          
+          echo "✅ EVM tests completed"
+      
+      - name: Cleanup with log upload
+        if: always()
+        uses: maidsafe/autonomi-actions/cleanup-autonomi-network@v1
+        with:
+          upload-logs: 'true'
+          keep-directories: 'true'
+          timeout-minutes: '5'
+  
+  # Job 2: Test without EVM (minimal setup)
+  test-minimal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Start minimal Autonomi Network
+        id: start-network
+        uses: maidsafe/autonomi-actions/spawn-autonomi-network@v1
+        with:
+          autonomi-version: ${{ github.event.inputs.autonomi-version || 'stable-2025.7.1.3' }}
+          node-count: '10'
+          enable-evm: 'false'
+      
+      - name: Test basic network operations
+        run: |
+          echo "Testing basic network operations..."
+          echo "Network peer: ${{ steps.start-network.outputs.peer-address }}"
+          
+          # Example basic tests:
+          # - Test file upload/download
+          # - Verify network connectivity
+          # - Test basic CLI operations
+          
+          # Check if ant CLI is available and working
+          if command -v ant &> /dev/null; then
+            echo "✅ ant CLI is available"
+            ant --version
+          else
+            echo "❌ ant CLI not found"
+            exit 1
+          fi
+          
+          echo "✅ Basic network tests completed"
+      
+      - name: Cleanup minimal setup
+        if: always()
+        uses: maidsafe/autonomi-actions/cleanup-autonomi-network@v1
+        with:
+          upload-logs: 'false'
+          keep-directories: 'false'
+  
+  # Job 3: Stress test with larger network
+  stress-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: github.event_name == 'workflow_dispatch'  # Only run on manual trigger
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Start large Autonomi Network
+        id: start-network
+        uses: maidsafe/autonomi-actions/spawn-autonomi-network@v1
+        with:
+          autonomi-version: ${{ github.event.inputs.autonomi-version || 'stable-2025.7.1.3' }}
+          node-count: '50'  # Larger network for stress testing
+          enable-evm: 'true'
+          wait-for-network: '30'  # More time for larger network
+      
+      - name: Run stress tests
+        timeout-minutes: 45
+        run: |
+          echo "Running stress tests on large network..."
+          echo "Network has 50 nodes, peer: ${{ steps.start-network.outputs.peer-address }}"
+          
+          # Example stress tests:
+          # - Concurrent file operations
+          # - Multiple client connections
+          # - High-throughput operations
+          # - Network resilience tests
+          
+          echo "✅ Stress tests completed"
+      
+      - name: Cleanup with full logging
+        if: always()
+        uses: maidsafe/autonomi-actions/cleanup-autonomi-network@v1
+        with:
+          upload-logs: 'true'
+          keep-directories: 'true'
+          timeout-minutes: '10'  # More time for cleanup of larger network

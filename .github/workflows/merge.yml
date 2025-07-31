@@ -1,0 +1,49 @@
+name: Test Autonomi Enterprise Gateway
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    name: various checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - shell: bash
+        run: SQLX_OFFLINE=true cargo clippy --all-targets --all-features -- -Dwarnings
+
+      - name: Run unit tests
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          # Set up test environment
+          export RUST_BACKTRACE=1
+          export RUST_LOG=info
+          
+          # Clean any existing test artifacts
+          rm -rf test_temp_* temp_uploads/
+          
+          # Run all tests
+          cargo test --all-targets --all-features --verbose -- --nocapture
+          
+          # Clean up test artifacts
+          rm -rf test_temp_* temp_uploads/
