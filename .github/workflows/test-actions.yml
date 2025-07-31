@@ -40,29 +40,49 @@ jobs:
       - name: Test ant CLI - File Upload and Download
         run: |
           echo "Testing ant CLI with network peer: $ANT_PEERS"
+          echo "SECRET_KEY available: ${SECRET_KEY:+YES (${#SECRET_KEY} chars)}${SECRET_KEY:-NO}"
           
           # Create a test file
           echo "Hello Autonomi Network - $(date)" > test-file.txt
           echo "This is a test file for CI validation" >> test-file.txt
           echo "Generated at: $(date -u)" >> test-file.txt
+          echo "Test file created with $(wc -c < test-file.txt) bytes"
 
           # Verify ant CLI is available
           echo "Checking ant CLI version..."
           ant --version
+          
+          # Create wallet if needed (fallback)
+          echo "Creating wallet as fallback..."
+          ant --peer "$ANT_PEERS" wallet create --no-password || echo "Wallet creation failed or not needed"
 
-          # Upload the test file
+          # Upload the test file with detailed logging
           echo "Uploading test file..."
-          ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt 2>&1
+          echo "Command: ant --peer \"$ANT_PEERS\" file upload test-file.txt --public"
+          
+          if ! ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt 2>&1; then
+            echo "❌ File upload failed"
+            echo "Upload output:"
+            cat upload_output.txt
+            echo "Environment variables:"
+            env | grep -E "(ANT_|SECRET_|EVM_)" || echo "No relevant env vars found"
+            exit 1
+          fi
+          
+          echo "Upload completed, output:"
           cat upload_output.txt
           
           # Extract the file address from upload output - try multiple patterns
+          echo "Extracting file address..."
           FILE_ADDR=$(grep -oE 'at: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f2 || \
+                     grep -oE 'address: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f2 || \
                      grep -oE '[A-Fa-f0-9]{64,}' upload_output.txt | head -1 || \
                      echo "")
           
           if [ -z "$FILE_ADDR" ]; then
             echo "❌ Failed to extract file address from upload output"
-            echo "Upload output was:"
+            echo "Tried patterns: 'at: [hex]+', 'address: [hex]+', '[hex]{64,}'"
+            echo "Full upload output was:"
             cat upload_output.txt
             exit 1
           fi
@@ -71,7 +91,10 @@ jobs:
           
           # Download the file back
           echo "Downloading file from address: $FILE_ADDR"
-          ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloaded-file.txt
+          if ! ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloaded-file.txt 2>&1; then
+            echo "❌ File download failed"
+            exit 1
+          fi
           
           # Verify the downloaded file exists and matches the original
           echo "Verifying downloaded file..."
@@ -79,6 +102,8 @@ jobs:
             echo "❌ Downloaded file does not exist"
             exit 1
           fi
+          
+          echo "Downloaded file size: $(wc -c < downloaded-file.txt) bytes"
           
           if cmp -s test-file.txt downloaded-file.txt; then
             echo "✅ File download successful - content matches original"
