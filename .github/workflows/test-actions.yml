@@ -45,19 +45,20 @@ jobs:
           echo "Hello Autonomi Network - $(date)" > test-file.txt
           echo "This is a test file for CI validation" >> test-file.txt
           echo "Generated at: $(date -u)" >> test-file.txt
-          
+
           # Verify ant CLI is available
           echo "Checking ant CLI version..."
           ant --version
-          
+
           # Upload the test file
           echo "Uploading test file..."
-          ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt
+          ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt 2>&1
           cat upload_output.txt
           
-          # Extract the file address from upload output
-          # The address should be in the output, we'll need to parse it
-          FILE_ADDR=$(grep -oE 'at: [a-f0-9]+' upload_output.txt | cut -d' ' -f2 || echo "")
+          # Extract the file address from upload output - try multiple patterns
+          FILE_ADDR=$(grep -oE 'at: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f2 || \
+                     grep -oE '[A-Fa-f0-9]{64,}' upload_output.txt | head -1 || \
+                     echo "")
           
           if [ -z "$FILE_ADDR" ]; then
             echo "❌ Failed to extract file address from upload output"
@@ -72,15 +73,20 @@ jobs:
           echo "Downloading file from address: $FILE_ADDR"
           ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloaded-file.txt
           
-          # Verify the downloaded file matches the original
+          # Verify the downloaded file exists and matches the original
           echo "Verifying downloaded file..."
+          if [ ! -f "downloaded-file.txt" ]; then
+            echo "❌ Downloaded file does not exist"
+            exit 1
+          fi
+          
           if cmp -s test-file.txt downloaded-file.txt; then
             echo "✅ File download successful - content matches original"
           else
             echo "❌ Downloaded file does not match original"
-            echo "Original file:"
+            echo "Original file content:"
             cat test-file.txt
-            echo "Downloaded file:"
+            echo "Downloaded file content:"
             cat downloaded-file.txt
             exit 1
           fi
