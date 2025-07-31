@@ -327,18 +327,38 @@ runs:
       run: |
         echo "Starting EVM testnet..."
         
-        # Start EVM testnet and capture PID
-        evm-testnet &
+        # Start EVM testnet and capture output
+        evm-testnet > evm_output.log 2>&1 &
         EVM_PID=$!
         
-        # Wait and verify it's still running
-        sleep 5
+        # Wait for EVM testnet to initialize and generate keys
+        echo "Waiting for EVM testnet to initialize..."
+        sleep 10
+        
+        # Verify it's still running
         if kill -0 $EVM_PID 2>/dev/null; then
           echo "✅ EVM testnet started successfully (PID: $EVM_PID)"
         else
           echo "❌ ERROR: EVM testnet failed to start or crashed immediately"
-          echo "   Check the EVM testnet logs above for error details"
+          echo "   Check the EVM testnet logs below:"
+          cat evm_output.log
           exit 1
+        fi
+        
+        # Extract SECRET_KEY from evm-testnet output
+        echo "Extracting SECRET_KEY from EVM testnet output..."
+        cat evm_output.log
+        
+        SECRET_KEY=$(grep -oE 'SECRET_KEY="[^"]*"' evm_output.log | cut -d'"' -f2 || echo "")
+        
+        if [ -n "$SECRET_KEY" ]; then
+          echo "SECRET_KEY=$SECRET_KEY" >> $GITHUB_ENV
+          echo "✅ SECRET_KEY extracted and set: ${SECRET_KEY:0:10}..."
+        else
+          echo "⚠️  WARNING: Could not extract SECRET_KEY from EVM testnet output"
+          echo "   This may cause CLI operations to fail"
+          echo "   EVM testnet output was:"
+          cat evm_output.log
         fi
         
         # Store PID for potential cleanup
