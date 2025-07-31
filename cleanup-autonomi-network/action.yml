@@ -2,6 +2,10 @@ name: 'Cleanup Autonomi Network'
 description: 'Stops local Autonomi testnet and EVM processes, cleans up resources'
 author: 'MaidSafe'
 
+branding:
+  icon: 'trash-2'
+  color: 'red'
+
 inputs:
   upload-logs:
     description: 'Whether to upload logs as artifacts'
