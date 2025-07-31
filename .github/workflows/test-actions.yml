@@ -69,14 +69,11 @@ jobs:
           
           # Extract the file address from upload output - try multiple patterns
           echo "Extracting file address..."
-          FILE_ADDR=$(grep -oE 'at: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f2 || \
-                     grep -oE 'address: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f2 || \
-                     grep -oE '[A-Fa-f0-9]{64,}' upload_output.txt | head -1 || \
-                     echo "")
+          FILE_ADDR=$(grep -oE 'At address: [A-Fa-f0-9]+' upload_output.txt | cut -d' ' -f3 || echo "")
           
           if [ -z "$FILE_ADDR" ]; then
             echo "❌ Failed to extract file address from upload output"
-            echo "Tried patterns: 'at: [hex]+', 'address: [hex]+', '[hex]{64,}'"
+            echo "Tried patterns: 'At address: [hex]+'"
             echo "Full upload output was:"
             cat upload_output.txt
             exit 1
