@@ -1,0 +1,95 @@
+name: Test Autonomi Actions
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test-autonomi-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Start Autonomi Network
+        id: start-network
+        uses: ./spawn-autonomi-network
+        with:
+          autonomi-version: 'stable-2025.7.1.3'
+          node-count: '25'
+          enable-evm: 'true'
+      
+      - name: Verify network is running
+        run: |
+          echo "Network Status: ${{ steps.start-network.outputs.network-status }}"
+          echo "Peer Address: ${{ steps.start-network.outputs.peer-address }}"
+          
+          if [ "${{ steps.start-network.outputs.network-status }}" != "running" ]; then
+            echo "❌ Network failed to start properly"
+            exit 1
+          fi
+          
+          echo "✅ Network is running successfully"
+          echo "Using peer: $ANT_PEERS"
+      
+      - name: Test ant CLI - File Upload and Download
+        run: |
+          echo "Testing ant CLI with network peer: $ANT_PEERS"
+          
+          # Create a test file
+          echo "Hello Autonomi Network - $(date)" > test-file.txt
+          echo "This is a test file for CI validation" >> test-file.txt
+          echo "Generated at: $(date -u)" >> test-file.txt
+          
+          # Verify ant CLI is available
+          echo "Checking ant CLI version..."
+          ant --version
+          
+          # Upload the test file
+          echo "Uploading test file..."
+          ant --peer "$ANT_PEERS" file upload test-file.txt --public > upload_output.txt
+          cat upload_output.txt
+          
+          # Extract the file address from upload output
+          # The address should be in the output, we'll need to parse it
+          FILE_ADDR=$(grep -oE 'at: [a-f0-9]+' upload_output.txt | cut -d' ' -f2 || echo "")
+          
+          if [ -z "$FILE_ADDR" ]; then
+            echo "❌ Failed to extract file address from upload output"
+            echo "Upload output was:"
+            cat upload_output.txt
+            exit 1
+          fi
+          
+          echo "✅ File uploaded successfully with address: $FILE_ADDR"
+          
+          # Download the file back
+          echo "Downloading file from address: $FILE_ADDR"
+          ant --peer "$ANT_PEERS" file download "$FILE_ADDR" downloaded-file.txt
+          
+          # Verify the downloaded file matches the original
+          echo "Verifying downloaded file..."
+          if cmp -s test-file.txt downloaded-file.txt; then
+            echo "✅ File download successful - content matches original"
+          else
+            echo "❌ Downloaded file does not match original"
+            echo "Original file:"
+            cat test-file.txt
+            echo "Downloaded file:"
+            cat downloaded-file.txt
+            exit 1
+          fi
+          
+          echo "🎉 Ant CLI test completed successfully!"
+      
+      - name: Cleanup Autonomi Network
+        if: always()
+        uses: ./cleanup-autonomi-network
+        with:
+          upload-logs: 'true'
+          keep-directories: 'false'
