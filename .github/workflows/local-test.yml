@@ -1,0 +1,165 @@
+name: Test Autonomi Enterprise Gateway (Local/No DB)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-backend-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      # Local testing environment variables
+      AUTONOMI_ENV: "local"
+      SECRET_KEY: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      SERVER_HOST: "127.0.0.1:3000"
+      JWT_SECRET: "test-jwt-secret-for-ci"
+      EVM_NETWORK: "local"
+      NODB: true
+      # Use stable release version (update as needed)
+      AUTONOMI_TAG: "stable-2025.7.1.3"
+      AUTONOMI_VERSION: "2025.7.1.3"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: web-client/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd web-client
+          npm ci
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Verify environment setup
+        run: |
+          echo "=========================================="
+          echo "Environment Verification"
+          echo "=========================================="
+          echo "AUTONOMI_ENV: $AUTONOMI_ENV"
+          echo "SERVER_HOST: $SERVER_HOST"
+          echo "EVM_NETWORK: $EVM_NETWORK"
+          echo "AUTONOMI_TAG: $AUTONOMI_TAG"
+          echo "AUTONOMI_VERSION: $AUTONOMI_VERSION"
+          echo "NODB: $NODB"
+
+      - name: Start Autonomi Network with EVM
+        uses: ./.github/actions/spawn-autonomi-network
+        with:
+          autonomi-version: 'stable-2025.7.1.3'
+          node-count: '25'
+          enable-evm: 'true'
+          wait-for-network: '30'
+
+      - name: Build gateway
+        run: cargo build --release --bin autonomi-gateway
+        timeout-minutes: 20
+
+      - name: Run Local Gateway (No DB)
+        run: |
+          echo "=========================================="
+          echo "Running Local Gateway"
+          echo "=========================================="
+          ./target/release/autonomi-gateway &
+          echo $! > gateway.pid
+
+          # Wait for server to start
+          echo "Waiting for gateway server to start..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:3000/admin/bootstrap-token > /dev/null 2>&1; then
+              echo "✅ Gateway server is running on http://127.0.0.1:3000"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Gateway server failed to start within 30 seconds"
+              exit 1
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 1
+          done
+        timeout-minutes: 15
+
+      - name: Run Local Gateway API Test
+        run: |
+          echo "=========================================="
+          echo "Running Local Gateway API Test"
+          echo "=========================================="
+          chmod +x test/test_backend_local.sh
+          ./test/test_backend_local.sh
+        timeout-minutes: 15
+
+      - name: Cleanup Autonomi Network
+        if: always()
+        uses: ./.github/actions/cleanup-autonomi-network
+        with:
+          upload-logs: 'true'
+          keep-directories: 'true'
+          timeout-minutes: '5'
+
+  local-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    env:
+      NODB: true
+      AUTONOMI_ENV: local
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: SQLX_OFFLINE=true cargo clippy --all-targets --all-features -- -Dwarnings
+
+      - name: Run unit tests (no database)
+        run: |
+          echo "Running unit tests in NODB mode..."
+          export RUST_BACKTRACE=1
+          export RUST_LOG=info
+          
+          # Clean any existing test artifacts
+          rm -rf test_temp_* temp_uploads/
+          
+          # Run tests
+          cargo test --all-targets --all-features --verbose -- --nocapture
+          
+          # Clean up
+          rm -rf test_temp_* temp_uploads/
+        timeout-minutes: 10

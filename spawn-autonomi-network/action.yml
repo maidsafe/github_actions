@@ -1,0 +1,443 @@
+name: 'Spawn Autonomi Network'
+description: 'Starts a local Autonomi testnet with EVM support - self-contained with all prerequisites'
+author: 'MaidSafe'
+
+inputs:
+  autonomi-version:
+    description: 'Autonomi version to use (e.g., stable-2025.7.1.3)'
+    required: false
+    default: 'stable-2025.7.1.3'
+  
+  node-count:
+    description: 'Number of nodes to start in the network'
+    required: false
+    default: '25'
+  
+  rewards-address:
+    description: 'EVM address for rewards'
+    required: false
+    default: '0x03B770D9cD32077cC0bF330c13C114a87643B124'
+  
+  enable-evm:
+    description: 'Whether to start EVM testnet alongside Autonomi network'
+    required: false
+    default: 'true'
+  
+  wait-for-network:
+    description: 'Time to wait for network to start (seconds)'
+    required: false
+    default: '15'
+
+outputs:
+  peer-address:
+    description: 'First peer address from the started network'
+    value: ${{ steps.extract-peer.outputs.peer-address }}
+  
+  network-status:
+    description: 'Status of the network startup'
+    value: ${{ steps.verify-network.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install prerequisites
+      shell: bash
+      run: |
+        echo "Installing prerequisites..."
+        
+        # Update package list once
+        sudo apt-get update
+        
+        # Install jq and ripgrep if not available
+        if ! command -v jq &> /dev/null; then
+          echo "Installing jq..."
+          sudo apt-get install -y jq || {
+            echo "❌ ERROR: Failed to install jq. This is required for network peer extraction."
+            exit 1
+          }
+        fi
+        
+        if ! command -v rg &> /dev/null; then
+          echo "Installing ripgrep..."
+          sudo apt-get install -y ripgrep || {
+            echo "⚠️  WARNING: Failed to install ripgrep. This may affect some functionality."
+          }
+        fi
+        
+        # Install unzip and curl if not available
+        if ! command -v unzip &> /dev/null; then
+          echo "Installing unzip..."
+          sudo apt-get install -y unzip || {
+            echo "❌ ERROR: Failed to install unzip. This is required for binary extraction."
+            exit 1
+          }
+        fi
+        
+        if ! command -v curl &> /dev/null; then
+          echo "Installing curl..."
+          sudo apt-get install -y curl || {
+            echo "❌ ERROR: Failed to install curl. This is required for downloading binaries."
+            exit 1
+          }
+        fi
+        
+        # Verify installations
+        jq --version
+        rg --version
+        unzip -v | head -1
+        curl --version | head -1
+        
+        echo "Prerequisites installed successfully"
+
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+
+    - name: Install Foundry (for EVM support)
+      if: inputs.enable-evm == 'true'
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly
+
+    - name: Create bins directory
+      shell: bash
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/autonomi-bins
+        echo "AUTONOMI_BINS_PATH=$GITHUB_WORKSPACE/autonomi-bins" >> $GITHUB_ENV
+
+    - name: Cache Autonomi binaries
+      uses: actions/cache@v4
+      id: cache-bins
+      with:
+        key: ${{ runner.os }}-autonomi-binaries-${{ inputs.autonomi-version }}
+        path: ${{ github.workspace }}/autonomi-bins/
+
+    - name: Download Autonomi binaries
+      if: steps.cache-bins.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        echo "Downloading Autonomi binaries version: ${{ inputs.autonomi-version }}"
+        
+        # Extract version number from tag (remove 'stable-' prefix if present)
+        VERSION="${{ inputs.autonomi-version }}"
+        VERSION_NUM="${VERSION#stable-}"
+        
+        # Download binaries
+        echo "Downloading from: https://github.com/maidsafe/autonomi/releases/download/${{ inputs.autonomi-version }}/${VERSION_NUM}.autonomi.x86_64-unknown-linux-musl.zip"
+        curl -L "https://github.com/maidsafe/autonomi/releases/download/${{ inputs.autonomi-version }}/${VERSION_NUM}.autonomi.x86_64-unknown-linux-musl.zip" -o autonomi-binaries.zip || {
+          echo "❌ ERROR: Failed to download Autonomi binaries from GitHub releases."
+          echo "   Please check if version '${{ inputs.autonomi-version }}' exists at:"
+          echo "   https://github.com/maidsafe/autonomi/releases/tag/${{ inputs.autonomi-version }}"
+          exit 1
+        }
+        
+        # Verify download
+        if [ ! -f "autonomi-binaries.zip" ] || [ ! -s "autonomi-binaries.zip" ]; then
+          echo "❌ ERROR: Downloaded file is missing or empty"
+          exit 1
+        fi
+        
+        # Extract binaries to our bins directory
+        echo "Extracting binaries to $AUTONOMI_BINS_PATH..."
+        unzip -j autonomi-binaries.zip antnode antctl ant -d $AUTONOMI_BINS_PATH || {
+          echo "❌ ERROR: Failed to extract binaries from zip file."
+          echo "   Zip file contents:"
+          unzip -l autonomi-binaries.zip || echo "   Could not list zip contents"
+          exit 1
+        }
+        
+        # Make binaries executable
+        chmod +x $AUTONOMI_BINS_PATH/*
+        
+        # Verify binaries
+        $AUTONOMI_BINS_PATH/antnode --version
+        $AUTONOMI_BINS_PATH/antctl --version
+        $AUTONOMI_BINS_PATH/ant --version
+        
+        echo "Binaries downloaded and verified"
+
+    - name: Build EVM testnet
+      if: steps.cache-bins.outputs.cache-hit != 'true' && inputs.enable-evm == 'true'
+      shell: bash
+      run: |
+        echo "Building EVM testnet from source..."
+        
+        # Extract version number
+        VERSION="${{ inputs.autonomi-version }}"
+        VERSION_NUM="${VERSION#stable-}"
+        
+        # Download source code
+        echo "Downloading source code for EVM testnet build..."
+        VERSION="${{ inputs.autonomi-version }}"
+        # Try both archive URL formats
+        if ! curl -L "https://github.com/maidsafe/autonomi/archive/refs/tags/${VERSION}.zip" -o autonomi-source.zip; then
+          echo "First archive URL failed, trying alternative format..."
+          if ! curl -L "https://github.com/maidsafe/autonomi/archive/${VERSION}.zip" -o autonomi-source.zip; then
+            echo "❌ ERROR: Failed to download Autonomi source code for EVM testnet build."
+            echo "   Tried both URL formats:"
+            echo "   - https://github.com/maidsafe/autonomi/archive/refs/tags/${VERSION}.zip"
+            echo "   - https://github.com/maidsafe/autonomi/archive/${VERSION}.zip"
+            echo "   Please check if tag '${VERSION}' exists at:"
+            echo "   https://github.com/maidsafe/autonomi/releases/tag/${VERSION}"
+            exit 1
+          fi
+        fi
+        
+        echo "Extracting source code..."
+        unzip autonomi-source.zip || {
+          echo "❌ ERROR: Failed to extract source code zip file."
+          exit 1
+        }
+        
+        # Build EVM testnet - handle directory name properly
+        VERSION="${{ inputs.autonomi-version }}"
+        ANT_SRC_DIR="autonomi-${VERSION}/"
+        
+        if [ ! -d "$ANT_SRC_DIR" ]; then
+          echo "❌ ERROR: Autonomi source directory not found at: $ANT_SRC_DIR"
+          echo "   Available directories:"
+          ls -la autonomi-*/ || echo "   No autonomi directories found"
+          exit 1
+        fi
+        
+        echo "Building EVM testnet from $ANT_SRC_DIR..."
+        # Save current directory
+        ORIGINAL_DIR=$(pwd)
+        cd "$ANT_SRC_DIR"
+        
+        cargo build --release --bin evm-testnet || {
+          echo "❌ ERROR: Failed to build EVM testnet binary."
+          echo "   Please check the Rust compilation errors above."
+          exit 1
+        }
+        
+        # Look for the binary in the correct target directory (relative to current build dir)
+        BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-target}"
+        if [ -f "$BUILD_TARGET_DIR/release/evm-testnet" ]; then
+          echo "Found EVM testnet binary at: $BUILD_TARGET_DIR/release/evm-testnet"
+          mv "$BUILD_TARGET_DIR/release/evm-testnet" "$AUTONOMI_BINS_PATH/"
+        else
+          echo "❌ ERROR: Could not find evm-testnet binary after build."
+          echo "   Expected location: $BUILD_TARGET_DIR/release/evm-testnet"
+          echo "   Current directory: $(pwd)"
+          echo "   Available files in target/release:"
+          ls -la "$BUILD_TARGET_DIR/release/" || echo "   target/release directory not found"
+          echo "   Available files in target:"
+          ls -la "$BUILD_TARGET_DIR/" || echo "   target directory not found"
+          exit 1
+        fi
+        
+        # Return to original directory
+        cd "$ORIGINAL_DIR"
+        
+        # Verify EVM testnet
+        $AUTONOMI_BINS_PATH/evm-testnet --version
+        
+        echo "EVM testnet built and verified"
+
+    - name: Install binaries to PATH
+      shell: bash
+      run: |
+        echo "Installing Autonomi binaries to /usr/local/bin..."
+        
+        # List what binaries we have in temp directory
+        echo "Available binaries in $AUTONOMI_BINS_PATH:"
+        ls -la "$AUTONOMI_BINS_PATH" || {
+          echo "❌ ERROR: No binaries directory found at $AUTONOMI_BINS_PATH"
+          exit 1
+        }
+        
+        # Install binaries directly to /usr/local/bin (already in PATH)
+        if [ -d "$AUTONOMI_BINS_PATH" ] && [ "$(ls -A $AUTONOMI_BINS_PATH)" ]; then
+          sudo cp $AUTONOMI_BINS_PATH/* /usr/local/bin/
+          echo "✅ Installed binaries to /usr/local/bin/"
+          
+          # Make sure they're executable
+          sudo chmod +x /usr/local/bin/antnode /usr/local/bin/antctl /usr/local/bin/ant
+          if [[ "${{ inputs.enable-evm }}" == "true" ]]; then
+            sudo chmod +x /usr/local/bin/evm-testnet
+          fi
+          echo "✅ Set executable permissions"
+        else
+          echo "❌ ERROR: No binaries found in $AUTONOMI_BINS_PATH to install"
+          exit 1
+        fi
+        
+        # Verify binaries are available in standard PATH
+        echo "Verifying binary installation..."
+        
+        echo "Checking antnode..."
+        if ! which antnode; then
+          echo "❌ ERROR: antnode not found in PATH after installation"
+          echo "Contents of /usr/local/bin:"
+          ls -la /usr/local/bin/ant* || echo "No ant* binaries found"
+          exit 1
+        fi
+        
+        if ! antnode --version; then
+          echo "❌ ERROR: antnode version check failed"
+          exit 1
+        fi
+        echo "✅ antnode: $(antnode --version | head -1)"
+        
+        echo "Checking antctl..."
+        if ! which antctl; then
+          echo "❌ ERROR: antctl not found in PATH after installation"
+          exit 1
+        fi
+        
+        if ! antctl --version; then
+          echo "❌ ERROR: antctl version check failed"
+          exit 1
+        fi
+        echo "✅ antctl: $(antctl --version | head -1)"
+        
+        echo "Checking ant..."
+        if ! which ant; then
+          echo "❌ ERROR: ant not found in PATH after installation"
+          exit 1
+        fi
+        
+        if ! ant --version; then
+          echo "❌ ERROR: ant version check failed"
+          exit 1
+        fi
+        echo "✅ ant: $(ant --version | head -1)"
+        
+        if [[ "${{ inputs.enable-evm }}" == "true" ]]; then
+          echo "Checking evm-testnet..."
+          if ! which evm-testnet; then
+            echo "❌ ERROR: evm-testnet not found in PATH after installation"
+            exit 1
+          fi
+          
+          if ! evm-testnet --version; then
+            echo "❌ ERROR: evm-testnet version check failed"
+            exit 1
+          fi
+          echo "✅ evm-testnet: $(evm-testnet --version | head -1)"
+        fi
+        
+        echo "🚀 All Autonomi binaries successfully installed and verified!"
+
+    - name: Start EVM testnet
+      if: inputs.enable-evm == 'true'
+      shell: bash
+      run: |
+        echo "Starting EVM testnet..."
+        
+        # Start EVM testnet and capture PID
+        evm-testnet &
+        EVM_PID=$!
+        
+        # Wait and verify it's still running
+        sleep 5
+        if kill -0 $EVM_PID 2>/dev/null; then
+          echo "✅ EVM testnet started successfully (PID: $EVM_PID)"
+        else
+          echo "❌ ERROR: EVM testnet failed to start or crashed immediately"
+          echo "   Check the EVM testnet logs above for error details"
+          exit 1
+        fi
+        
+        # Store PID for potential cleanup
+        echo "EVM_TESTNET_PID=$EVM_PID" >> $GITHUB_ENV
+
+    - name: Start Autonomi network
+      shell: bash
+      run: |
+        echo "Starting Autonomi network with ${{ inputs.node-count }} nodes..."
+        
+        # Set environment variables
+        export ANT_LOG=v
+        export EVM_NETWORK=local
+        
+        # Build command arguments
+        ANTCTL_CMD="antctl local run --count ${{ inputs.node-count }} --node-path $(which antnode) --rewards-address ${{ inputs.rewards-address }}"
+        if [[ "${{ inputs.enable-evm }}" == "true" ]]; then
+          ANTCTL_CMD="$ANTCTL_CMD evm-local"
+        fi
+        
+        echo "Starting network with command: $ANTCTL_CMD"
+        
+        # Start the network
+        $ANTCTL_CMD
+
+        echo "Network started"
+
+    - name: Extract peer information
+      id: extract-peer
+      shell: bash
+      run: |
+        echo "Extracting peer information..."
+        
+        # Look for the node registry file
+        registry_path="$HOME/.local/share/autonomi/local_node_registry.json"
+        
+        if [ -f "$registry_path" ]; then
+          echo "Found registry file at: $registry_path"
+          
+          # Extract first peer address
+          peer_addr=$(jq -r '.nodes[0].listen_addr[0]' "$registry_path")
+          
+          if [ "$peer_addr" != "null" ] && [ -n "$peer_addr" ]; then
+            echo "peer-address=$peer_addr" >> $GITHUB_OUTPUT
+            echo "ANT_PEERS=$peer_addr" >> $GITHUB_ENV
+            echo "✅ Network peer extracted: $peer_addr"
+          else
+            echo "❌ Failed to extract peer address from registry"
+            echo "peer-address=" >> $GITHUB_OUTPUT
+          fi
+          
+          # Show registry contents for debugging
+          echo "Registry contents:"
+          cat "$registry_path" | jq '.'
+        else
+          echo "❌ Node registry file not found at: $registry_path"
+          echo "Available files in autonomi directory:"
+          ls -la "$HOME/.local/share/autonomi/" || echo "Directory does not exist"
+          echo "peer-address=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Verify network status
+      id: verify-network
+      shell: bash
+      run: |
+        echo "Verifying network status..."
+        
+        # Basic verification - check if antctl can see the network
+        if antctl local status > /dev/null 2>&1; then
+          echo "status=running" >> $GITHUB_OUTPUT
+          echo "✅ Network is running successfully"
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "❌ Network verification failed"
+          
+          # Show debugging information
+          echo "Process list:"
+          ps aux | grep -E "(antnode|antctl)" || true
+          
+          echo "Network files:"
+          ls -la "$HOME/.local/share/autonomi/" || echo "No autonomi directory"
+        fi
+
+    - name: Network startup summary
+      shell: bash
+      run: |
+        echo "=========================================="
+        echo "Autonomi Network Startup Summary"
+        echo "=========================================="
+        echo "Version: ${{ inputs.autonomi-version }}"
+        echo "Node Count: ${{ inputs.node-count }}"
+        echo "EVM Enabled: ${{ inputs.enable-evm }}"
+        echo "Rewards Address: ${{ inputs.rewards-address }}"
+        echo "Peer Address: ${{ steps.extract-peer.outputs.peer-address }}"
+        echo "Status: ${{ steps.verify-network.outputs.status }}"
+        echo "=========================================="
+        
+        if [[ "${{ steps.verify-network.outputs.status }}" == "running" ]]; then
+          echo "🚀 Network is ready for use!"
+        else
+          echo "⚠️  Network may not be fully ready - check logs above"
+        fi
