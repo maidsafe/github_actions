@@ -187,7 +187,7 @@ runs:
       if: inputs.upload-logs == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: autonomi-network-logs-${{ github.run_id }}
+        name: autonomi-network-logs-${{ github.run_id }}-${{ github.job }}-${{ github.run_attempt }}
         path: network-logs/
         retention-days: 7
 
